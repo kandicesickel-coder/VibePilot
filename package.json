@@ -1,0 +1,21 @@
+{
+  "name": "vibepilot",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "pnpm --filter @vibepilot/desktop tauri dev",
+    "build": "pnpm -r build",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "test:e2e": "pnpm --filter @vibepilot/desktop test:e2e"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^2.27.9",
+    "typescript": "^5.7.2"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  }
+}

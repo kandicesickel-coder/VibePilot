@@ -1,0 +1,83 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "VibePilot",
+  "identifier": "app.vibepilot",
+  "version": "0.1.0",
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "beforeBuildCommand": "pnpm build",
+    "devUrl": "http://localhost:1420",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "title": "VibePilot — Agent 研发记忆与工作流层",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 960,
+        "minHeight": 600,
+        "resizable": true,
+        "fullscreen": false,
+        "center": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["msi", "dmg", "app"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "certificateThumbprint": null,
+      "digestAlgorithm": "sha256",
+      "timestampUrl": ""
+    }
+  },
+  "plugins": {
+    "shell": {
+      "open": true,
+      "scope": [
+        {
+          "name": "git",
+          "cmd": "git",
+          "args": true
+        },
+        {
+          "name": "npm",
+          "cmd": "npm",
+          "args": true
+        },
+        {
+          "name": "pnpm",
+          "cmd": "pnpm",
+          "args": true
+        },
+        {
+          "name": "cargo",
+          "cmd": "cargo",
+          "args": true
+        },
+        {
+          "name": "claude",
+          "cmd": "claude",
+          "args": true
+        },
+        {
+          "name": "codex",
+          "cmd": "codex",
+          "args": true
+        }
+      ]
+    }
+  }
+}
