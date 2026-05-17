@@ -16,7 +16,7 @@ interface TauriInfo {
 
 function App() {
   const [projects, setProjects] = useState<Project[]>([]);
-  const [tauriInfo, setTauriInfo] = useState<string>('');
+  const [tauriInfo, setTauriInfo] = useState<TauriInfo | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -24,7 +24,7 @@ function App() {
       invoke<string>('get_tauri_info'),
       invoke<Project[]>('list_projects'),
     ]).then(([info, projs]) => {
-      setTauriInfo(info);
+      setTauriInfo(JSON.parse(info) as TauriInfo);
       setProjects(projs);
       setLoading(false);
     }).catch((err) => {
@@ -42,7 +42,7 @@ function App() {
             <span className="text-2xl font-bold text-cyan-400">X</span>
             <div>
               <h1 className="text-lg font-semibold text-white">VibePilot</h1>
-              <p className="text-xs text-cyan-600">{tauriInfo || 'Loading...'}</p>
+              <p className="text-xs text-cyan-600">{tauriInfo ? `${tauriInfo.version} / Tauri ${tauriInfo.tauri_version}` : 'Loading...'}</p>
             </div>
           </div>
         </div>

@@ -1,9 +1,9 @@
-// src-tauri/src/storage/schema.rs
-// Domain types matching the SQLite schema
+// src-tauri/src/types.rs
+// Shared data types — no storage dependency to avoid circular imports
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Project {
     pub id: String,
     pub name: String,
@@ -11,102 +11,126 @@ pub struct Project {
     pub repo_url: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+    #[serde(default)]
     pub last_session_at: Option<String>,
+    #[serde(default)]
     pub total_token_cost_usd: f64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct LearningCard {
     pub id: String,
     pub project_id: String,
-    pub card_type: String,  // "failed_attempt" | "success_path" | "root_cause" | "verification_evidence"
+    pub card_type: String,
     pub title: String,
     pub trigger: String,
     pub body: String,
+    #[serde(default)]
     pub token_cost_usd: Option<f64>,
+    #[serde(default)]
     pub confirmed_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Deserialize)]
 pub struct CreateLearningCard {
     pub project_id: String,
     pub card_type: String,
     pub title: String,
     pub trigger: String,
     pub body: String,
+    #[serde(default)]
     pub token_cost_usd: Option<f64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Session {
     pub id: String,
     pub project_id: String,
-    pub backend_id: String,   // "claude-code" | "codex" | "gemini" | "ollama"
+    pub backend_id: String,
     pub model: String,
     pub workflow_stage: String,
     pub started_at: String,
+    #[serde(default)]
     pub finished_at: Option<String>,
+    #[serde(default)]
     pub total_token_input: i64,
+    #[serde(default)]
     pub total_token_output: i64,
+    #[serde(default)]
     pub total_token_cached: i64,
+    #[serde(default)]
     pub total_cost_usd: f64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Task {
     pub id: String,
     pub project_id: String,
+    #[serde(default)]
     pub session_id: Option<String>,
     pub title: String,
     pub description: String,
-    pub status: String,  // "pending" | "in_progress" | "completed" | "blocked"
-    pub acceptance_criteria: String,  // JSON array
+    pub status: String,
+    #[serde(default)]
+    pub acceptance_criteria: String,
+    #[serde(default)]
     pub verification_method: String,
+    #[serde(default)]
     pub priority: String,
-    pub dependencies: String,  // JSON array
+    #[serde(default)]
+    pub dependencies: String,
+    #[serde(default)]
     pub phase: String,
     pub created_at: String,
     pub updated_at: String,
+    #[serde(default)]
     pub completed_at: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Deserialize)]
 pub struct CreateTask {
     pub project_id: String,
     pub title: String,
     pub description: String,
+    #[serde(default)]
     pub acceptance_criteria: String,
+    #[serde(default)]
     pub verification_method: String,
+    #[serde(default = "default_priority")]
     pub priority: String,
+    #[serde(default)]
     pub phase: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+fn default_priority() -> String { "medium".to_string() }
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Verification {
     pub id: String,
     pub task_id: String,
-    pub vtype: String,  // "test" | "lint" | "typecheck" | "build" | "manual"
+    pub vtype: String,
     pub passed: bool,
+    #[serde(default)]
     pub output: String,
+    #[serde(default)]
     pub duration_ms: Option<i64>,
     pub created_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Deserialize)]
 pub struct CreateVerification {
     pub task_id: String,
     pub vtype: String,
     pub passed: bool,
+    #[serde(default)]
     pub output: String,
+    #[serde(default)]
     pub duration_ms: Option<i64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct TokenUsage {
     pub id: String,
     pub session_id: Option<String>,
@@ -114,26 +138,29 @@ pub struct TokenUsage {
     pub model: String,
     pub input_tokens: i64,
     pub output_tokens: i64,
+    #[serde(default)]
     pub cached_tokens: i64,
+    #[serde(default)]
     pub reasoning_tokens: i64,
     pub cost_usd: f64,
     pub created_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Deserialize)]
 pub struct CreateTokenUsage {
     pub session_id: Option<String>,
     pub project_id: String,
     pub model: String,
     pub input_tokens: i64,
     pub output_tokens: i64,
+    #[serde(default)]
     pub cached_tokens: i64,
+    #[serde(default)]
     pub reasoning_tokens: i64,
     pub cost_usd: f64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Serialize)]
 pub struct CostSummary {
     pub total_input_tokens: i64,
     pub total_output_tokens: i64,
@@ -141,50 +168,16 @@ pub struct CostSummary {
     pub total_cost_usd: f64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Serialize)]
 pub struct ProjectRules {
+    #[serde(default)]
     pub agents_md: Option<String>,
+    #[serde(default)]
     pub claude_md: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProjectScanResult {
-    pub name: String,
-    pub path: String,
-    pub languages: Vec<String>,
-    pub package_managers: Vec<String>,
-    pub test_commands: Vec<String>,
-    pub build_commands: Vec<String>,
-    pub has_agents_md: bool,
-    pub has_claude_md: bool,
-    pub agents_md_content: Option<String>,
-    pub claude_md_content: Option<String>,
-    pub directory_tree: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ContextPack {
-    pub project_id: String,
-    pub session_id: Option<String>,
-    pub rules_content: String,
-    pub learning_cards: Vec<LearningCard>,
-    pub repo_map_summary: String,
-    pub active_tasks: Vec<Task>,
-    pub total_tokens_estimate: i64,
-    pub components: Vec<ContextPackComponent>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ContextPackComponent {
-    pub name: String,
-    pub token_estimate: i64,
-    pub content_preview: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OutcomeRecord {
-    pub project_id: String,
-    pub task_id: String,
-    pub outcome: String,  // "success" | "failed" | "partial"
-    pub details: String,
+#[derive(Debug, Serialize)]
+pub struct TauriInfo {
+    pub version: String,
+    pub tauri_version: String,
 }

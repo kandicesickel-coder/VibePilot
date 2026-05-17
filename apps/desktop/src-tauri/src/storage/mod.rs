@@ -1,16 +1,9 @@
 // src-tauri/src/storage/mod.rs
-// SQLite storage layer via rusqlite + Drizzle-style schema
+// SQLite storage layer via rusqlite
 
-mod schema;
-mod repo;
-
-pub use schema::*;
-pub use repo::Database;
-
-use rusqlite::{Connection, params};
+use crate::types::*;
+use rusqlite::{params, Connection};
 use std::path::PathBuf;
-use std::sync::Arc;
-use tokio::sync::Mutex;
 use thiserror::Error;
 use uuid::Uuid;
 use chrono::Utc;
@@ -56,21 +49,19 @@ impl Database {
                 name TEXT NOT NULL,
                 path TEXT NOT NULL UNIQUE,
                 repo_url TEXT,
-                created_at TEXT NOT NULL DEFAULT (datetime('now')),
-                updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
                 last_session_at TEXT,
                 total_token_cost_usd REAL DEFAULT 0
             );
-
             CREATE TABLE IF NOT EXISTS project_facts (
                 id TEXT PRIMARY KEY,
                 project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
                 category TEXT NOT NULL,
                 content TEXT NOT NULL,
                 source TEXT NOT NULL,
-                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                created_at TEXT NOT NULL
             );
-
             CREATE TABLE IF NOT EXISTS learning_cards (
                 id TEXT PRIMARY KEY,
                 project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -80,24 +71,22 @@ impl Database {
                 body TEXT NOT NULL,
                 token_cost_usd REAL,
                 confirmed_at TEXT,
-                created_at TEXT NOT NULL DEFAULT (datetime('now')),
-                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
             );
-
             CREATE TABLE IF NOT EXISTS sessions (
                 id TEXT PRIMARY KEY,
                 project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
                 backend_id TEXT NOT NULL,
                 model TEXT NOT NULL,
                 workflow_stage TEXT NOT NULL DEFAULT 'spec',
-                started_at TEXT NOT NULL DEFAULT (datetime('now')),
+                started_at TEXT NOT NULL,
                 finished_at TEXT,
                 total_token_input INTEGER DEFAULT 0,
                 total_token_output INTEGER DEFAULT 0,
                 total_token_cached INTEGER DEFAULT 0,
                 total_cost_usd REAL DEFAULT 0
             );
-
             CREATE TABLE IF NOT EXISTS token_usage (
                 id TEXT PRIMARY KEY,
                 session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
@@ -108,9 +97,8 @@ impl Database {
                 cached_tokens INTEGER DEFAULT 0,
                 reasoning_tokens INTEGER DEFAULT 0,
                 cost_usd REAL NOT NULL DEFAULT 0,
-                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                created_at TEXT NOT NULL
             );
-
             CREATE TABLE IF NOT EXISTS tasks (
                 id TEXT PRIMARY KEY,
                 project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -123,11 +111,10 @@ impl Database {
                 priority TEXT NOT NULL DEFAULT 'medium',
                 dependencies TEXT DEFAULT '[]',
                 phase TEXT NOT NULL DEFAULT 'foundation',
-                created_at TEXT NOT NULL DEFAULT (datetime('now')),
-                updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
                 completed_at TEXT
             );
-
             CREATE TABLE IF NOT EXISTS verifications (
                 id TEXT PRIMARY KEY,
                 task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
@@ -135,58 +122,35 @@ impl Database {
                 passed INTEGER NOT NULL DEFAULT 0,
                 output TEXT NOT NULL DEFAULT '',
                 duration_ms INTEGER,
-                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                created_at TEXT NOT NULL
             );
-
-            CREATE TABLE IF NOT EXISTS repo_maps (
-                id TEXT PRIMARY KEY,
-                project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-                hash TEXT NOT NULL,
-                symbols_json TEXT NOT NULL DEFAULT '{}',
-                dependencies_json TEXT NOT NULL DEFAULT '{}',
-                created_at TEXT NOT NULL DEFAULT (datetime('now'))
-            );
-
-            CREATE TABLE IF NOT EXISTS context_packs (
-                id TEXT PRIMARY KEY,
-                session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-                components_json TEXT NOT NULL DEFAULT '{}',
-                total_tokens INTEGER NOT NULL DEFAULT 0,
-                cached_tokens INTEGER DEFAULT 0,
-                cost_usd REAL NOT NULL DEFAULT 0,
-                created_at TEXT NOT NULL DEFAULT (datetime('now'))
-            );
-
             CREATE INDEX IF NOT EXISTS idx_projects_path ON projects(path);
             CREATE INDEX IF NOT EXISTS idx_learning_cards_project ON learning_cards(project_id);
-            CREATE INDEX IF NOT EXISTS idx_learning_cards_confirmed ON learning_cards(confirmed_at);
             CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project_id);
-            CREATE INDEX IF NOT EXISTS idx_token_usage_project ON token_usage(project_id);
             CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id);
             CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
-            CREATE INDEX IF NOT EXISTS idx_verifications_task ON verifications(task_id);
         "#)?;
         Ok(())
     }
 
-    // ── Projects ─────────────────────────────────────────────────────────────
+    // ── Projects ───────────────────────────────────────────────────────────
 
-    pub fn create_project(&self, name: &str, path: &str, repo_url: Option<&str>) -> Result<schema::Project, StorageError> {
+    pub fn create_project(&self, name: &str, path: &str, repo_url: Option<&str>) -> Result<Project, StorageError> {
         let id = Uuid::new_v4().to_string();
         let now = Utc::now().to_rfc3339();
         self.conn.execute(
             "INSERT INTO projects (id, name, path, repo_url, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![id, name, path, repo_url, now, now],
+            params![id, name, path, repo_url, &now, &now],
         )?;
         self.get_project(&id)
     }
 
-    pub fn list_projects(&self) -> Result<Vec<schema::Project>, StorageError> {
+    pub fn list_projects(&self) -> Result<Vec<Project>, StorageError> {
         let mut stmt = self.conn.prepare(
             "SELECT id, name, path, repo_url, created_at, updated_at, last_session_at, total_token_cost_usd FROM projects ORDER BY updated_at DESC"
         )?;
         let rows = stmt.query_map([], |row| {
-            Ok(schema::Project {
+            Ok(Project {
                 id: row.get(0)?,
                 name: row.get(1)?,
                 path: row.get(2)?,
@@ -200,12 +164,12 @@ impl Database {
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
-    pub fn get_project(&self, id: &str) -> Result<schema::Project, StorageError> {
+    pub fn get_project(&self, id: &str) -> Result<Project, StorageError> {
         let mut stmt = self.conn.prepare(
             "SELECT id, name, path, repo_url, created_at, updated_at, last_session_at, total_token_cost_usd FROM projects WHERE id = ?1"
         )?;
         let row = stmt.query_row([id], |row| {
-            Ok(schema::Project {
+            Ok(Project {
                 id: row.get(0)?,
                 name: row.get(1)?,
                 path: row.get(2)?,
@@ -219,29 +183,20 @@ impl Database {
         Ok(row)
     }
 
-    pub fn update_project_session(&self, id: &str, cost: f64) -> Result<(), StorageError> {
-        let now = Utc::now().to_rfc3339();
-        self.conn.execute(
-            "UPDATE projects SET last_session_at = ?1, total_token_cost_usd = total_token_cost_usd + ?2, updated_at = ?1 WHERE id = ?3",
-            params![now, cost, id],
-        )?;
-        Ok(())
-    }
+    // ── Learning Cards ─────────────────────────────────────────────────────
 
-    // ── Learning Cards ──────────────────────────────────────────────────────
-
-    pub fn create_learning_card(&self, card: &schema::CreateLearningCard) -> Result<schema::LearningCard, StorageError> {
+    pub fn create_learning_card(&self, card: &CreateLearningCard) -> Result<LearningCard, StorageError> {
         let id = Uuid::new_v4().to_string();
         let now = Utc::now().to_rfc3339();
         self.conn.execute(
             "INSERT INTO learning_cards (id, project_id, type, title, trigger_condition, body, token_cost_usd, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-            params![id, card.project_id, card.card_type, card.title, card.trigger, card.body, card.token_cost_usd, now, now],
+            params![&id, &card.project_id, &card.card_type, &card.title, &card.trigger, &card.body, &card.token_cost_usd, &now, &now],
         )?;
         self.get_learning_card(&id)
     }
 
-    pub fn list_learning_cards(&self, project_id: &str, confirmed_only: bool) -> Result<Vec<schema::LearningCard>, StorageError> {
+    pub fn list_learning_cards(&self, project_id: &str, confirmed_only: bool) -> Result<Vec<LearningCard>, StorageError> {
         let sql = if confirmed_only {
             "SELECT id, project_id, type, title, trigger_condition, body, token_cost_usd, confirmed_at, created_at, updated_at FROM learning_cards WHERE project_id = ?1 AND confirmed_at IS NOT NULL ORDER BY confirmed_at DESC"
         } else {
@@ -249,7 +204,7 @@ impl Database {
         };
         let mut stmt = self.conn.prepare(sql)?;
         let rows = stmt.query_map([project_id], |row| {
-            Ok(schema::LearningCard {
+            Ok(LearningCard {
                 id: row.get(0)?,
                 project_id: row.get(1)?,
                 card_type: row.get(2)?,
@@ -267,16 +222,16 @@ impl Database {
 
     pub fn confirm_learning_card(&self, id: &str) -> Result<(), StorageError> {
         let now = Utc::now().to_rfc3339();
-        self.conn.execute("UPDATE learning_cards SET confirmed_at = ?1, updated_at = ?1 WHERE id = ?2", params![now, id])?;
+        self.conn.execute("UPDATE learning_cards SET confirmed_at = ?1, updated_at = ?1 WHERE id = ?2", params![&now, id])?;
         Ok(())
     }
 
-    pub fn get_learning_card(&self, id: &str) -> Result<schema::LearningCard, StorageError> {
+    fn get_learning_card(&self, id: &str) -> Result<LearningCard, StorageError> {
         let mut stmt = self.conn.prepare(
             "SELECT id, project_id, type, title, trigger_condition, body, token_cost_usd, confirmed_at, created_at, updated_at FROM learning_cards WHERE id = ?1"
         )?;
         let row = stmt.query_row([id], |row| {
-            Ok(schema::LearningCard {
+            Ok(LearningCard {
                 id: row.get(0)?,
                 project_id: row.get(1)?,
                 card_type: row.get(2)?,
@@ -292,15 +247,15 @@ impl Database {
         Ok(row)
     }
 
-    pub fn search_learning_cards(&self, project_id: &str, query: &str) -> Result<Vec<schema::LearningCard>, StorageError> {
+    pub fn search_learning_cards(&self, project_id: &str, query: &str) -> Result<Vec<LearningCard>, StorageError> {
         let pattern = format!("%{}%", query);
         let mut stmt = self.conn.prepare(
             "SELECT id, project_id, type, title, trigger_condition, body, token_cost_usd, confirmed_at, created_at, updated_at FROM learning_cards
              WHERE project_id = ?1 AND confirmed_at IS NOT NULL AND (title LIKE ?2 OR trigger_condition LIKE ?2 OR body LIKE ?2)
              ORDER BY confirmed_at DESC LIMIT 20"
         )?;
-        let rows = stmt.query_map(params![project_id, pattern], |row| {
-            Ok(schema::LearningCard {
+        let rows = stmt.query_map(params![project_id, &pattern], |row| {
+            Ok(LearningCard {
                 id: row.get(0)?,
                 project_id: row.get(1)?,
                 card_type: row.get(2)?,
@@ -318,22 +273,22 @@ impl Database {
 
     // ── Sessions ─────────────────────────────────────────────────────────────
 
-    pub fn create_session(&self, project_id: &str, backend_id: &str, model: &str, workflow_stage: &str) -> Result<schema::Session, StorageError> {
+    pub fn create_session(&self, project_id: &str, backend_id: &str, model: &str, workflow_stage: &str) -> Result<Session, StorageError> {
         let id = Uuid::new_v4().to_string();
         let now = Utc::now().to_rfc3339();
         self.conn.execute(
             "INSERT INTO sessions (id, project_id, backend_id, model, workflow_stage, started_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![id, project_id, backend_id, model, workflow_stage, now],
+            params![&id, project_id, backend_id, model, workflow_stage, &now],
         )?;
         self.get_session(&id)
     }
 
-    pub fn get_session(&self, id: &str) -> Result<schema::Session, StorageError> {
+    pub fn get_session(&self, id: &str) -> Result<Session, StorageError> {
         let mut stmt = self.conn.prepare(
             "SELECT id, project_id, backend_id, model, workflow_stage, started_at, finished_at, total_token_input, total_token_output, total_token_cached, total_cost_usd FROM sessions WHERE id = ?1"
         )?;
         let row = stmt.query_row([id], |row| {
-            Ok(schema::Session {
+            Ok(Session {
                 id: row.get(0)?,
                 project_id: row.get(1)?,
                 backend_id: row.get(2)?,
@@ -350,34 +305,25 @@ impl Database {
         Ok(row)
     }
 
-    pub fn finish_session(&self, id: &str, input: i64, output: i64, cached: i64, cost: f64) -> Result<(), StorageError> {
-        let now = Utc::now().to_rfc3339();
-        self.conn.execute(
-            "UPDATE sessions SET finished_at = ?1, total_token_input = ?2, total_token_output = ?3, total_token_cached = ?4, total_cost_usd = ?5 WHERE id = ?6",
-            params![now, input, output, cached, cost, id],
-        )?;
-        Ok(())
-    }
+    // ── Tasks ──────────────────────────────────────────────────────────────
 
-    // ── Tasks ────────────────────────────────────────────────────────────────
-
-    pub fn create_task(&self, task: &schema::CreateTask) -> Result<schema::Task, StorageError> {
+    pub fn create_task(&self, task: &CreateTask) -> Result<Task, StorageError> {
         let id = Uuid::new_v4().to_string();
         let now = Utc::now().to_rfc3339();
         self.conn.execute(
             "INSERT INTO tasks (id, project_id, title, description, acceptance_criteria, verification_method, priority, phase, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-            params![id, task.project_id, task.title, task.description, task.acceptance_criteria, task.verification_method, task.priority, task.phase, now, now],
+            params![&id, &task.project_id, &task.title, &task.description, &task.acceptance_criteria, &task.verification_method, &task.priority, &task.phase, &now, &now],
         )?;
         self.get_task(&id)
     }
 
-    pub fn list_tasks(&self, project_id: &str) -> Result<Vec<schema::Task>, StorageError> {
+    pub fn list_tasks(&self, project_id: &str) -> Result<Vec<Task>, StorageError> {
         let mut stmt = self.conn.prepare(
             "SELECT id, project_id, session_id, title, description, status, acceptance_criteria, verification_method, priority, dependencies, phase, created_at, updated_at, completed_at FROM tasks WHERE project_id = ?1 ORDER BY created_at ASC"
         )?;
         let rows = stmt.query_map([project_id], |row| {
-            Ok(schema::Task {
+            Ok(Task {
                 id: row.get(0)?,
                 project_id: row.get(1)?,
                 session_id: row.get(2)?,
@@ -397,12 +343,12 @@ impl Database {
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
-    pub fn get_task(&self, id: &str) -> Result<schema::Task, StorageError> {
+    fn get_task(&self, id: &str) -> Result<Task, StorageError> {
         let mut stmt = self.conn.prepare(
             "SELECT id, project_id, session_id, title, description, status, acceptance_criteria, verification_method, priority, dependencies, phase, created_at, updated_at, completed_at FROM tasks WHERE id = ?1"
         )?;
         let row = stmt.query_row([id], |row| {
-            Ok(schema::Task {
+            Ok(Task {
                 id: row.get(0)?,
                 project_id: row.get(1)?,
                 session_id: row.get(2)?,
@@ -424,26 +370,27 @@ impl Database {
 
     pub fn update_task_status(&self, id: &str, status: &str) -> Result<(), StorageError> {
         let now = Utc::now().to_rfc3339();
-        let completed_at = if status == "completed" { Some(now.as_str()) } else { None };
+        let completed_at: Option<String> = if status == "completed" { Some(now.clone()) } else { None };
         self.conn.execute(
             "UPDATE tasks SET status = ?1, updated_at = ?2, completed_at = ?3 WHERE id = ?4",
-            params![status, now, completed_at, id],
+            params![status, &now, &completed_at, id],
         )?;
         Ok(())
     }
 
-    // ── Verifications ─────────────────────────────────────────────────────────
+    // ── Verifications ─────────────────────────────────────────────────────
 
-    pub fn create_verification(&self, v: &schema::CreateVerification) -> Result<schema::Verification, StorageError> {
+    pub fn create_verification(&self, v: &CreateVerification) -> Result<Verification, StorageError> {
         let id = Uuid::new_v4().to_string();
         let now = Utc::now().to_rfc3339();
+        let passed_i32: i32 = if v.passed { 1 } else { 0 };
         self.conn.execute(
             "INSERT INTO verifications (id, task_id, type, passed, output, duration_ms, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![id, v.task_id, v.vtype, v.passed as i32, v.output, v.duration_ms, now],
+            params![&id, &v.task_id, &v.vtype, passed_i32, &v.output, &v.duration_ms, &now],
         )?;
         let mut stmt = self.conn.prepare("SELECT id, task_id, type, passed, output, duration_ms, created_at FROM verifications WHERE id = ?1")?;
-        let row = stmt.query_row([id], |row| {
-            Ok(schema::Verification {
+        let row = stmt.query_row([&id], |row| {
+            Ok(Verification {
                 id: row.get(0)?,
                 task_id: row.get(1)?,
                 vtype: row.get(2)?,
@@ -456,25 +403,25 @@ impl Database {
         Ok(row)
     }
 
-    // ── Token Usage ───────────────────────────────────────────────────────────
+    // ── Token Usage ───────────────────────────────────────────────────────
 
-    pub fn record_token_usage(&self, usage: &schema::CreateTokenUsage) -> Result<(), StorageError> {
+    pub fn record_token_usage(&self, usage: &CreateTokenUsage) -> Result<(), StorageError> {
         let id = Uuid::new_v4().to_string();
         let now = Utc::now().to_rfc3339();
         self.conn.execute(
             "INSERT INTO token_usage (id, session_id, project_id, model, input_tokens, output_tokens, cached_tokens, reasoning_tokens, cost_usd, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-            params![id, usage.session_id, usage.project_id, usage.model, usage.input_tokens, usage.output_tokens, usage.cached_tokens, usage.reasoning_tokens, usage.cost_usd, now],
+            params![&id, &usage.session_id, &usage.project_id, &usage.model, usage.input_tokens, usage.output_tokens, usage.cached_tokens, usage.reasoning_tokens, usage.cost_usd, &now],
         )?;
         Ok(())
     }
 
-    pub fn get_token_usage(&self, project_id: &str) -> Result<Vec<schema::TokenUsage>, StorageError> {
+    pub fn get_token_usage(&self, project_id: &str) -> Result<Vec<TokenUsage>, StorageError> {
         let mut stmt = self.conn.prepare(
             "SELECT id, session_id, project_id, model, input_tokens, output_tokens, cached_tokens, reasoning_tokens, cost_usd, created_at FROM token_usage WHERE project_id = ?1 ORDER BY created_at DESC LIMIT 100"
         )?;
         let rows = stmt.query_map([project_id], |row| {
-            Ok(schema::TokenUsage {
+            Ok(TokenUsage {
                 id: row.get(0)?,
                 session_id: row.get(1)?,
                 project_id: row.get(2)?,
@@ -490,12 +437,12 @@ impl Database {
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
-    pub fn get_cost_summary(&self, project_id: &str) -> Result<schema::CostSummary, StorageError> {
+    pub fn get_cost_summary(&self, project_id: &str) -> Result<CostSummary, StorageError> {
         let mut stmt = self.conn.prepare(
             "SELECT COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0), COALESCE(SUM(cached_tokens),0), COALESCE(SUM(cost_usd),0) FROM token_usage WHERE project_id = ?1"
         )?;
         let row = stmt.query_row([project_id], |row| {
-            Ok(schema::CostSummary {
+            Ok(CostSummary {
                 total_input_tokens: row.get(0)?,
                 total_output_tokens: row.get(1)?,
                 total_cached_tokens: row.get(2)?,
@@ -505,9 +452,9 @@ impl Database {
         Ok(row)
     }
 
-    // ── Project Rules (AGENTS.md / CLAUDE.md) ─────────────────────────────────
+    // ── Project Rules ──────────────────────────────────────────────────────
 
-    pub fn get_project_rules(&self, project_id: &str) -> Result<schema::ProjectRules, StorageError> {
+    pub fn get_project_rules(&self, project_id: &str) -> Result<ProjectRules, StorageError> {
         let mut stmt = self.conn.prepare(
             "SELECT content FROM project_facts WHERE project_id = ?1 AND category = 'rules' ORDER BY created_at DESC LIMIT 1"
         )?;
@@ -516,10 +463,7 @@ impl Database {
             "SELECT content FROM project_facts WHERE project_id = ?1 AND category = 'claude_md' ORDER BY created_at DESC LIMIT 1"
         )?;
         let claude_md: Option<String> = stmt2.query_row([project_id], |row| row.get(0)).ok();
-        Ok(schema::ProjectRules {
-            agents_md,
-            claude_md,
-        })
+        Ok(ProjectRules { agents_md, claude_md })
     }
 
     pub fn save_project_rules(&self, project_id: &str, agents_md: Option<&str>, claude_md: Option<&str>) -> Result<(), StorageError> {
@@ -528,14 +472,14 @@ impl Database {
             let id = Uuid::new_v4().to_string();
             self.conn.execute(
                 "INSERT INTO project_facts (id, project_id, category, content, source, created_at) VALUES (?1, ?2, 'rules', ?3, 'system', ?4)",
-                params![id, project_id, content, now],
+                params![&id, project_id, content, &now],
             )?;
         }
         if let Some(content) = claude_md {
             let id = Uuid::new_v4().to_string();
             self.conn.execute(
                 "INSERT INTO project_facts (id, project_id, category, content, source, created_at) VALUES (?1, ?2, 'claude_md', ?3, 'system', ?4)",
-                params![id, project_id, content, now],
+                params![&id, project_id, content, &now],
             )?;
         }
         Ok(())

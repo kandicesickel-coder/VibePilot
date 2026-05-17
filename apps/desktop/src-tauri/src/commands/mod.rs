@@ -3,21 +3,16 @@
 
 pub mod scanner;
 
+use crate::storage;
+use crate::types::*;
 use crate::AppState;
-use crate::storage::schema::*;
-use crate::storage::repo::Database as Db;
 use tauri::State;
-use std::sync::Arc;
-use tokio::sync::Mutex;
 
-type StateDb = Arc<Mutex<Db>>;
-
-fn with_db<F, T>(state: &State<AppState>, f: F) -> Result<T, String>
-where
-    F: FnOnce(&Db) -> Result<T, String>,
-{
-    // Run blocking DB operation in a blocking context
-    let guard = state.db.blocking_lock();
+fn with_db<T>(
+    state: &State<'_, AppState>,
+    f: impl FnOnce(&storage::Database) -> Result<T, storage::StorageError>,
+) -> Result<T, String> {
+    let guard = state.db.lock().unwrap();
     f(&guard).map_err(|e| e.to_string())
 }
 
@@ -30,21 +25,17 @@ pub async fn create_project(
     repo_url: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<Project, String> {
-    let guard = state.db.lock().await;
-    guard.create_project(&name, &path, repo_url.as_deref())
-        .map_err(|e| e.to_string())
+    with_db(&state, |db| db.create_project(&name, &path, repo_url.as_deref()))
 }
 
 #[tauri::command]
 pub async fn list_projects(state: State<'_, AppState>) -> Result<Vec<Project>, String> {
-    let guard = state.db.lock().await;
-    guard.list_projects().map_err(|e| e.to_string())
+    with_db(&state, |db| db.list_projects())
 }
 
 #[tauri::command]
 pub async fn get_project(id: String, state: State<'_, AppState>) -> Result<Project, String> {
-    let guard = state.db.lock().await;
-    guard.get_project(&id).map_err(|e| e.to_string())
+    with_db(&state, |db| db.get_project(&id))
 }
 
 // ── Session Commands ─────────────────────────────────────────────────────────
@@ -57,15 +48,14 @@ pub async fn create_session(
     workflow_stage: String,
     state: State<'_, AppState>,
 ) -> Result<Session, String> {
-    let guard = state.db.lock().await;
-    guard.create_session(&project_id, &backend_id, &model, &workflow_stage)
-        .map_err(|e| e.to_string())
+    with_db(&state, |db| {
+        db.create_session(&project_id, &backend_id, &model, &workflow_stage)
+    })
 }
 
 #[tauri::command]
 pub async fn get_session(id: String, state: State<'_, AppState>) -> Result<Session, String> {
-    let guard = state.db.lock().await;
-    guard.get_session(&id).map_err(|e| e.to_string())
+    with_db(&state, |db| db.get_session(&id))
 }
 
 // ── Learning Card Commands ───────────────────────────────────────────────────
@@ -75,8 +65,7 @@ pub async fn create_learning_card(
     card: CreateLearningCard,
     state: State<'_, AppState>,
 ) -> Result<LearningCard, String> {
-    let guard = state.db.lock().await;
-    guard.create_learning_card(&card).map_err(|e| e.to_string())
+    with_db(&state, |db| db.create_learning_card(&card))
 }
 
 #[tauri::command]
@@ -85,18 +74,15 @@ pub async fn list_learning_cards(
     confirmed_only: bool,
     state: State<'_, AppState>,
 ) -> Result<Vec<LearningCard>, String> {
-    let guard = state.db.lock().await;
-    guard.list_learning_cards(&project_id, confirmed_only)
-        .map_err(|e| e.to_string())
+    with_db(&state, |db| db.list_learning_cards(&project_id, confirmed_only))
 }
 
 #[tauri::command]
 pub async fn confirm_learning_card(id: String, state: State<'_, AppState>) -> Result<(), String> {
-    let guard = state.db.lock().await;
-    guard.confirm_learning_card(&id).map_err(|e| e.to_string())
+    with_db(&state, |db| db.confirm_learning_card(&id))
 }
 
-// ── Memory Search (MCP tools) ─────────────────────────────────────────────────
+// ── Memory Search (MCP tools) ────────────────────────────────────────────────
 
 #[tauri::command]
 pub async fn search_memory(
@@ -104,180 +90,140 @@ pub async fn search_memory(
     query: String,
     state: State<'_, AppState>,
 ) -> Result<Vec<LearningCard>, String> {
-    let guard = state.db.lock().await;
-    guard.search_learning_cards(&project_id, &query).map_err(|e| e.to_string())
+    with_db(&state, |db| db.search_learning_cards(&project_id, &query))
 }
 
 #[tauri::command]
 pub async fn get_context_pack(
     project_id: String,
-    task_id: Option<String>,
+    session_id: String,
     state: State<'_, AppState>,
-) -> Result<ContextPack, String> {
-    let guard = state.db.lock().await;
-
-    // Fetch confirmed learning cards
-    let cards = guard.list_learning_cards(&project_id, true).map_err(|e| e.to_string())?;
-
-    // Fetch active tasks
-    let tasks = guard.list_tasks(&project_id).map_err(|e| e.to_string())?;
-    let active_tasks: Vec<Task> = tasks.into_iter()
-        .filter(|t| t.status == "pending" || t.status == "in_progress")
-        .take(5)
-        .collect();
-
-    // Fetch project rules
-    let rules = guard.get_project_rules(&project_id).map_err(|e| e.to_string())?;
-    let rules_content = format!(
-        "{}\n\n{}",
-        rules.agents_md.as_deref().unwrap_or(""),
-        rules.claude_md.as_deref().unwrap_or("")
-    );
-
-    // Estimate tokens (rough: 4 chars per token)
-    let rules_tokens = (rules_content.len() as i64) / 4;
-    let cards_tokens: i64 = cards.iter().map(|c| (c.body.len() as i64) / 4).sum();
-    let total = rules_tokens + cards_tokens + (active_tasks.len() as i64) * 50;
-
-    Ok(ContextPack {
-        project_id,
-        session_id: None,
-        rules_content,
-        learning_cards: cards,
-        repo_map_summary: String::new(),
-        active_tasks,
-        total_tokens_estimate: total,
-        components: vec![
-            ContextPackComponent {
-                name: "rules".to_string(),
-                token_estimate: rules_tokens,
-                content_preview: format!("{} chars", rules_content.len()),
-            },
-            ContextPackComponent {
-                name: "learning_cards".to_string(),
-                token_estimate: cards_tokens,
-                content_preview: format!("{} cards", cards.len()),
-            },
-        ],
+) -> Result<serde_json::Value, String> {
+    with_db(&state, |db| {
+        let rules = db.get_project_rules(&project_id)?;
+        let cards = db.list_learning_cards(&project_id, true)?;
+        let tasks = db.list_tasks(&project_id)?;
+        Ok(serde_json::json!({
+            "project_id": project_id,
+            "session_id": session_id,
+            "rules": rules,
+            "learning_cards": cards,
+            "active_tasks": tasks.into_iter().filter(|t| t.status != "completed").collect::<Vec<_>>()
+        }))
     })
 }
 
 #[tauri::command]
 pub async fn record_outcome(
-    record: OutcomeRecord,
+    project_id: String,
+    session_id: String,
+    outcome: serde_json::Value,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    let guard = state.db.lock().await;
-
-    // Generate a Learning Card from the outcome
-    let card_type = match record.outcome.as_str() {
-        "success" => "success_path",
-        "failed" => "failed_attempt",
-        _ => "root_cause",
-    };
-
-    let card = CreateLearningCard {
-        project_id: record.project_id.clone(),
-        card_type: card_type.to_string(),
-        title: format!("Task {}: {}", record.task_id, record.outcome),
-        trigger: record.details.chars().take(200).collect(),
-        body: record.details,
-        token_cost_usd: None,
-    };
-
-    guard.create_learning_card(&card).map_err(|e| e.to_string())?;
-    Ok(())
+    with_db(&state, |db| {
+        let title = outcome.get("title").and_then(|v| v.as_str()).unwrap_or("Untitled");
+        let body = serde_json::to_string(&outcome).unwrap_or_default();
+        let card = CreateLearningCard {
+            project_id: project_id.clone(),
+            card_type: "outcome".to_string(),
+            title: title.to_string(),
+            trigger: format!("session {} completed", session_id),
+            body,
+            token_cost_usd: None,
+        };
+        db.create_learning_card(&card)?;
+        Ok(())
+    })
 }
 
 #[tauri::command]
-pub async fn get_project_rules(
-    project_id: String,
-    state: State<'_, AppState>,
-) -> Result<ProjectRules, String> {
-    let guard = state.db.lock().await;
-    guard.get_project_rules(&project_id).map_err(|e| e.to_string())
+pub async fn get_project_rules(project_id: String, state: State<'_, AppState>) -> Result<ProjectRules, String> {
+    with_db(&state, |db| db.get_project_rules(&project_id))
 }
 
 // ── Task Commands ───────────────────────────────────────────────────────────
 
 #[tauri::command]
-pub async fn create_task(
-    task: CreateTask,
-    state: State<'_, AppState>,
-) -> Result<Task, String> {
-    let guard = state.db.lock().await;
-    guard.create_task(&task).map_err(|e| e.to_string())
+pub async fn create_task(task: CreateTask, state: State<'_, AppState>) -> Result<Task, String> {
+    with_db(&state, |db| db.create_task(&task))
 }
 
 #[tauri::command]
-pub async fn list_tasks(
-    project_id: String,
-    state: State<'_, AppState>,
-) -> Result<Vec<Task>, String> {
-    let guard = state.db.lock().await;
-    guard.list_tasks(&project_id).map_err(|e| e.to_string())
+pub async fn list_tasks(project_id: String, state: State<'_, AppState>) -> Result<Vec<Task>, String> {
+    with_db(&state, |db| db.list_tasks(&project_id))
 }
 
 #[tauri::command]
-pub async fn update_task_status(
-    id: String,
-    status: String,
-    state: State<'_, AppState>,
-) -> Result<(), String> {
-    let guard = state.db.lock().await;
-    guard.update_task_status(&id, &status).map_err(|e| e.to_string())
+pub async fn update_task_status(id: String, status: String, state: State<'_, AppState>) -> Result<(), String> {
+    with_db(&state, |db| db.update_task_status(&id, &status))
 }
 
-// ── Verification Commands ────────────────────────────────────────────────────
+// ── Verification Commands ───────────────────────────────────────────────────
 
 #[tauri::command]
 pub async fn create_verification(
     v: CreateVerification,
     state: State<'_, AppState>,
 ) -> Result<Verification, String> {
-    let guard = state.db.lock().await;
-    guard.create_verification(&v).map_err(|e| e.to_string())
+    with_db(&state, |db| db.create_verification(&v))
 }
 
-// ── Token / Cost Commands ────────────────────────────────────────────────────
+// ── Token Usage Commands ────────────────────────────────────────────────────
 
 #[tauri::command]
-pub async fn get_token_usage(
-    project_id: String,
-    state: State<'_, AppState>,
-) -> Result<Vec<TokenUsage>, String> {
-    let guard = state.db.lock().await;
-    guard.get_token_usage(&project_id).map_err(|e| e.to_string())
+pub async fn get_token_usage(project_id: String, state: State<'_, AppState>) -> Result<Vec<TokenUsage>, String> {
+    with_db(&state, |db| db.get_token_usage(&project_id))
 }
 
 #[tauri::command]
-pub async fn get_cost_summary(
-    project_id: String,
-    state: State<'_, AppState>,
-) -> Result<CostSummary, String> {
-    let guard = state.db.lock().await;
-    guard.get_cost_summary(&project_id).map_err(|e| e.to_string())
+pub async fn get_cost_summary(project_id: String, state: State<'_, AppState>) -> Result<CostSummary, String> {
+    with_db(&state, |db| db.get_cost_summary(&project_id))
 }
 
-// ── Project Rules Scan ───────────────────────────────────────────────────────
+// ── Agent Rules Scan ───────────────────────────────────────────────────────
 
 #[tauri::command]
-pub async fn scan_agents_md(
-    project_id: String,
-    state: State<'_, AppState>,
-) -> Result<ProjectRules, String> {
-    let guard = state.db.lock().await;
-    guard.get_project_rules(&project_id).map_err(|e| e.to_string())
+pub async fn scan_agents_md(project_id: String, state: State<'_, AppState>) -> Result<ProjectRules, String> {
+    with_db(&state, |db| {
+        let project = db.get_project(&project_id)?;
+        let path = std::path::Path::new(&project.path);
+        let mut agents_md = None;
+        let mut claude_md = None;
+        if let Ok(entries) = std::fs::read_dir(path) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name == "AGENTS.md" || name == ".claude.md" {
+                    if let Ok(content) = std::fs::read_to_string(entry.path()) {
+                        if name == "AGENTS.md" {
+                            agents_md = Some(content);
+                        } else {
+                            claude_md = Some(content);
+                        }
+                    }
+                }
+            }
+        }
+        if agents_md.is_some() || claude_md.is_some() {
+            db.save_project_rules(&project_id, agents_md.as_deref(), claude_md.as_deref())?;
+        }
+        Ok(ProjectRules { agents_md, claude_md })
+    })
 }
 
-// ── Tauri Info ───────────────────────────────────────────────────────────────
+// ── Info ─────────────────────────────────────────────────────────────────────
 
 #[tauri::command]
-pub async fn get_tauri_info() -> Result<String, String> {
-    Ok(format!(
-        "VibePilot v{} | Tauri {} | Rust {}",
-        env!("CARGO_PKG_VERSION"),
-        tauri::VERSION,
-        rustc_version::version().unwrap_or_else(|_| "unknown".to_string())
-    ))
+pub async fn get_tauri_info() -> Result<TauriInfo, String> {
+    Ok(TauriInfo {
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        tauri_version: "2".to_string(),
+    })
+}
+
+// ── Scan Project (from scanner module) ─────────────────────────────────────
+
+#[tauri::command]
+pub async fn scan_project(path: String, _state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+    let result = scanner::scan_project(&path).map_err(|e| e.to_string())?;
+    serde_json::to_value(result).map_err(|e| e.to_string())
 }

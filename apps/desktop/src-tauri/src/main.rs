@@ -2,39 +2,31 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod commands;
-mod orchestrator;
-mod sandbox;
 mod storage;
+mod types;
 
-use std::sync::Arc;
-use tauri::Manager;
-use tokio::sync::Mutex;
-use tracing::info;
-use tracing_subscriber;
+use std::sync::{Arc, Mutex};
 
 pub struct AppState {
     pub db: Arc<Mutex<storage::Database>>,
 }
 
 fn main() {
-    // Initialize logging
-    tracing_subscriber::fmt()
-        .with_target(false)
-        .with_env_filter("vibepilot=info")
-        .init();
+    println!("Starting VibePilot Desktop v0.1.0");
 
-    info!("Starting VibePilot Desktop v0.1.0");
-
-    // Initialize database
-    let db = storage::Database::new().expect("Failed to initialize database");
-    let db = Arc::new(Mutex::new(db));
+    let db = match storage::Database::new() {
+        Ok(db) => Arc::new(Mutex::new(db)),
+        Err(e) => {
+            eprintln!("Failed to initialize database: {}", e);
+            std::process::exit(1);
+        }
+    };
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
         .manage(AppState { db })
         .invoke_handler(tauri::generate_handler![
-            commands::scan_project,
             commands::create_project,
             commands::list_projects,
             commands::get_project,
@@ -55,17 +47,10 @@ fn main() {
             commands::get_cost_summary,
             commands::scan_agents_md,
             commands::get_tauri_info,
+            commands::scan_project,
         ])
-        .setup(|app| {
-            info!("VibePilot Desktop initialized successfully");
-
-            // Set up panic hook for logging
-            let app_handle = app.handle().clone();
-            std::panic::set_hook(Box::new(move |panic_info| {
-                tracing::error!("PANIC: {}", panic_info);
-                let _ = app_handle.emit("vibepilot:panic", panic_info.to_string());
-            }));
-
+        .setup(|_app| {
+            println!("VibePilot Desktop initialized successfully");
             Ok(())
         })
         .run(tauri::generate_context!())
