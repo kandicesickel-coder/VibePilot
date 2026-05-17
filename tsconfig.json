@@ -1,0 +1,13 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./apps/desktop" },
+    { "path": "./apps/mobile" },
+    { "path": "./apps/web-console" },
+    { "path": "./packages/core" },
+    { "path": "./packages/ui" },
+    { "path": "./packages/mcp-server" },
+    { "path": "./packages/prompts" },
+    { "path": "./packages/runner-protocol" }
+  ]
+}
